@@ -274,6 +274,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     continue;
 
                 var tableScript = new StringBuilder();
+
                 // Tables
                 if (_schemaExcluded.Contains(table.Schema.ToLower()))
                     continue;
@@ -288,11 +289,42 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 // Foreign Key
                 foreach (ForeignKey foreignKey in table.ForeignKeys)
-                    tableScript.AppendLine(MapToString(foreignKey.Script(_scriptingOption)));
+                {
+                    var foreignKeyScript = new StringBuilder();
+                    foreignKeyScript.AppendLine(MapToString(foreignKey.Script(_scriptingOption)));
+                    var scriptForeignKeyInfo = new MssqlScriptInfo
+                    {
+                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                        Type = "ForeignKey",
+                        Schema = $"{table.Schema}.{table.Name}",
+                        Name = foreignKey.Name,
+                        Body = foreignKeyScript.ToString()
+                    };
+                    scriptCollection.Add(scriptForeignKeyInfo);
+                }
+                    
 
                 // Index
                 foreach(Microsoft.SqlServer.Management.Smo.Index index in table.Indexes)
-                    tableScript.AppendLine(MapToString(index.Script(_scriptingOption)));
+                {
+                    if (index.IsClustered)
+                    {
+                        tableScript.AppendLine(MapToString(index.Script(_scriptingOption)));
+                        continue;
+                    }
+
+                    var indexScript = new StringBuilder();
+                    indexScript.AppendLine(MapToString(index.Script(_scriptingOption)));
+                    var scriptIndexInfo = new MssqlScriptInfo
+                    {
+                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                        Type = "Index",
+                        Schema = $"{table.Schema}.{table.Name}",
+                        Name = index.Name,
+                        Body = indexScript.ToString()
+                    };
+                    scriptCollection.Add(scriptIndexInfo);
+                }                    
 
                 var scriptTableInfo = new MssqlScriptInfo
                 {
