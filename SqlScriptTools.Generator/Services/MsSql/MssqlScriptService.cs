@@ -302,7 +302,21 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     };
                     scriptCollection.Add(scriptForeignKeyInfo);
                 }
-                    
+                
+                foreach(Trigger trigger in table.Triggers)
+                {
+                    var triggerScript = new StringBuilder();
+                    triggerScript.AppendLine(MapToString(trigger.Script(_scriptingOption)));
+                    var scriptIndexInfo = new MssqlScriptInfo
+                    {
+                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                        Type = "Trigger",
+                        Schema = $"{table.Schema}.{table.Name}",
+                        Name = trigger.Name,
+                        Body = triggerScript.ToString()
+                    };
+                    scriptCollection.Add(scriptIndexInfo);
+                }
 
                 // Index
                 foreach(Microsoft.SqlServer.Management.Smo.Index index in table.Indexes)
@@ -791,8 +805,11 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
             var resultString = new StringBuilder();
             foreach (var str in collection)
+            {
                 resultString.AppendLine(str);
-            resultString.AppendLine($"GO{Environment.NewLine}");
+                resultString.AppendLine($"GO{Environment.NewLine}");
+            }
+
             return resultString.ToString();
         }
         #endregion
