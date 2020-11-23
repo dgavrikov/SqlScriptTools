@@ -51,12 +51,12 @@ namespace SqlScriptTools.Generator
         private static void ConfigureServices(IServiceCollection services)
         {
             // Build configuration
-            _configuration = (IConfiguration)new ConfigurationBuilder()
+            _configuration = new ConfigurationBuilder()
                 .SetBasePath(Directory.GetCurrentDirectory())
                 .AddJsonFile("appsettings.json", false)
                 .Build();
 
-            services.AddSingleton<IConfiguration>(_configuration);
+            services.AddSingleton(_configuration);
 
             // Setting
             services

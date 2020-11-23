@@ -28,7 +28,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
             var serverConnection = new ServerConnection(connectionInfo.Server)
             {
-                DatabaseName = connectionInfo.Database ?? "master"
+                DatabaseName = "master"
             };
             if (!string.IsNullOrEmpty(connectionInfo.Login))
             {
@@ -40,7 +40,6 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
         private static string GetServerName(Server server)
             => server.NetName;
-        private string DatabaseName => _connectionInfo?.Database;
 
         public MssqlScriptService(
             ConnectionInfo connectionInfo,
@@ -64,39 +63,67 @@ namespace SqlScriptTools.Generator.Services.MsSql
             const string method = nameof(GetScriptInfoAsync);
             _logger?.LogInformation($"{method} begin.");
 
-            var listScriptInfo = new List<IScriptInfo>(30);
-            var connection = GetConnection(_connectionInfo);
-            var server = new Server(connection);
-            listScriptInfo.AddRange(GetEndpoints(server));
-            listScriptInfo.AddRange(GetServerJob(server));
+            var listScriptInfo = new List<IScriptInfo>(30 * _connectionInfo.Databases.Length);
+            var tasks = new List<Task<List<IScriptInfo>>>(_connectionInfo.Databases.Length);
 
-            listScriptInfo.AddRange(GetSchemas(server));
-            listScriptInfo.AddRange(GetTables(server));
-            listScriptInfo.AddRange(GetViews(server));
-            listScriptInfo.AddRange(GetSynonyms(server));
-            listScriptInfo.AddRange(GetStoredProcedures(server));
-            listScriptInfo.AddRange(GetUserDefinedAggregates(server));
-            listScriptInfo.AddRange(GetUserDefinedDataTypes(server));
-            listScriptInfo.AddRange(GetUserDefinedFunctions(server));
-            listScriptInfo.AddRange(GetUserDefinedTableTypes(server));
-            listScriptInfo.AddRange(GetUserDefinedTypes(server));
-            // 2005
-            if (server.VersionMajor >= 9)
+            foreach (var database in _connectionInfo.Databases)
             {
-                listScriptInfo.AddRange(GetAssemblies(server));
-                listScriptInfo.AddRange(GetPartitionFunctions(server));
-                listScriptInfo.AddRange(GetPartitionSchemes(server));
-                listScriptInfo.AddRange(GetServiceBrokerMessageTypes(server));
-                listScriptInfo.AddRange(GetServiceBrokerServiceContracts(server));
-                listScriptInfo.AddRange(GetServiceBrokerQueues(server));
-                listScriptInfo.AddRange(GetServiceBrokerServices(server));
-                listScriptInfo.AddRange(GetServiceBrokerRoutes(server));
-                listScriptInfo.AddRange(GetServiceBrokerRemoteBinding(server));
+                var task = Task.Run(() =>
+                {
+                    var taskListScriptInfo = new List<IScriptInfo>(30);
+                    
+                    var connection = GetConnection(_connectionInfo);
+                    connection.DatabaseName = database;
+
+                    var server = new Server(connection);
+
+                    taskListScriptInfo.AddRange(GetEndpoints(server));
+                    taskListScriptInfo.AddRange(GetServerJob(server));
+
+                    taskListScriptInfo.AddRange(GetSchemas(server, database));
+                    taskListScriptInfo.AddRange(GetTables(server, database));
+                    taskListScriptInfo.AddRange(GetViews(server, database));
+                    taskListScriptInfo.AddRange(GetSynonyms(server, database));
+                    taskListScriptInfo.AddRange(GetStoredProcedures(server, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedAggregates(server, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedDataTypes(server, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedFunctions(server, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedTableTypes(server, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedTypes(server, database));
+                    // 2005
+                    if (server.VersionMajor >= 9)
+                    {
+                        taskListScriptInfo.AddRange(GetAssemblies(server, database));
+                        taskListScriptInfo.AddRange(GetPartitionFunctions(server, database));
+                        taskListScriptInfo.AddRange(GetPartitionSchemes(server, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerMessageTypes(server, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerServiceContracts(server, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerQueues(server, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerServices(server, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerRoutes(server, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerRemoteBinding(server, database));
+                    }
+                    //2012
+                    if (server.VersionMajor >= 11)
+                    {
+                        taskListScriptInfo.AddRange(GetSequences(server, database));
+                    }
+
+                    return taskListScriptInfo;
+                });
+                tasks.Add(task);
             }
-            //2012
-            if (server.VersionMajor >= 11)
+
+            Task.WaitAll(tasks.ToArray());
+            
+            foreach(var task in tasks)
             {
-                listScriptInfo.AddRange(GetSequences(server));
+                if (task.IsCompletedSuccessfully)
+                    listScriptInfo.AddRange(task.Result);
+                else if (task.Exception != null)
+                {
+                    _logger?.LogError(task.Exception, $"Error task status={task.Status}");
+                }
             }
 
             _logger?.LogInformation($"{method} end.");
@@ -108,7 +135,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
         private List<MssqlScriptInfo> GetEndpoints(Server server)
         {
             const string method = nameof(GetEndpoints);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server} begin.");
 
             var scriptCollection = new List<MssqlScriptInfo>(server.Endpoints.Count);
             
@@ -128,13 +155,13 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server} end.");
             return scriptCollection;
         }
         private List<MssqlScriptInfo> GetServerJob(Server server)
         {
             const string method = nameof(GetServerJob);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server} begin.");
             var scriptCollection = new List<MssqlScriptInfo>(server.JobServer.Jobs.Count);
 
             foreach (Job job in server.JobServer.Jobs)
@@ -177,18 +204,18 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     scriptCollection.Add(schedullerScriptInfo);
                 }
             }
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server} end.");
             return scriptCollection;
         }
         #endregion
 
         #region private generate ScriptInfo database level
-        private List<MssqlScriptInfo> GetSchemas(Server server)
+        private List<MssqlScriptInfo> GetSchemas(Server server, string databaseName)
         {
             const string method = nameof(GetSchemas);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.Schemas.Count);
 
             foreach (Schema schema in database.Schemas)
@@ -198,7 +225,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "Schema",
                     Schema = schema.Owner,
                     Name = schema.Name,
@@ -207,23 +234,23 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetPartitionSchemes(Server server)
+        private List<MssqlScriptInfo> GetPartitionSchemes(Server server, string databaseName)
         {
             const string method = nameof(GetPartitionSchemes);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.PartitionSchemes.Count);
 
             foreach (PartitionScheme ps in database.PartitionSchemes)
             {
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "PartitionScheme",
                     Name = ps.Name,
                     Body = MapToString(ps.Script(_scriptingOption))
@@ -231,17 +258,17 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
 
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetPartitionFunctions(Server server)
+        private List<MssqlScriptInfo> GetPartitionFunctions(Server server, string databaseName)
         {
             const string method = nameof(GetPartitionFunctions);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.PartitionFunctions.Count);
 
             foreach (PartitionFunction pf in database.PartitionFunctions)
@@ -249,23 +276,23 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "PartitionFunction",
                     Name = pf.Name,
                     Body = MapToString(pf.Script(_scriptingOption))
                 };
                 scriptCollection.Add(scriptInfo);
             }
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
 
             return scriptCollection;
         }
-        private List<MssqlScriptInfo> GetTables(Server server)
+        private List<MssqlScriptInfo> GetTables(Server server, string databaseName)
         {
             const string method = nameof(GetTables);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.Tables.Count);
 
             foreach (Table table in database.Tables)
@@ -294,7 +321,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     foreignKeyScript.AppendLine(MapToString(foreignKey.Script(_scriptingOption)));
                     var scriptForeignKeyInfo = new MssqlScriptInfo
                     {
-                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                         Type = "ForeignKey",
                         Schema = $"{table.Schema}.{table.Name}",
                         Name = foreignKey.Name,
@@ -309,7 +336,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     triggerScript.AppendLine(MapToString(trigger.Script(_scriptingOption)));
                     var scriptIndexInfo = new MssqlScriptInfo
                     {
-                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                         Type = "Trigger",
                         Schema = $"{table.Schema}.{table.Name}",
                         Name = trigger.Name,
@@ -331,7 +358,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     indexScript.AppendLine(MapToString(index.Script(_scriptingOption)));
                     var scriptIndexInfo = new MssqlScriptInfo
                     {
-                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName =databaseName },
                         Type = "Index",
                         Schema = $"{table.Schema}.{table.Name}",
                         Name = index.Name,
@@ -342,7 +369,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptTableInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "Table",
                     Schema = table.Schema,
                     Name = table.Name,
@@ -351,16 +378,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptTableInfo);
 
             }
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
 
             return scriptCollection;
         }
-        private List<MssqlScriptInfo> GetViews(Server server)
+        private List<MssqlScriptInfo> GetViews(Server server, string databaseName)
         {
             const string method = nameof(GetViews);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.Views.Count);
 
             foreach (View view in database.Views)
@@ -373,7 +400,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "View",
                     Schema = view.Schema,
                     Name = view.Name,
@@ -381,16 +408,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 };
                 scriptCollection.Add(scriptInfo);
             }
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetSynonyms(Server server)
+        private List<MssqlScriptInfo> GetSynonyms(Server server, string databaseName)
         {
             const string method = nameof(GetSynonyms);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.Synonyms.Count);
 
             foreach (Synonym synonym in database.Synonyms)
@@ -400,7 +427,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "Synonym",
                     Schema = synonym.Schema,
                     Name = synonym.Name,
@@ -409,17 +436,17 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
 
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetSequences(Server server)
+        private List<MssqlScriptInfo> GetSequences(Server server, string databaseName)
         {
             const string method = nameof(GetSequences);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.Sequences.Count);
 
             foreach (Sequence sequence in database.Sequences)
@@ -429,7 +456,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "Sequence",
                     Schema = sequence.Schema,
                     Name = sequence.Name,
@@ -438,17 +465,17 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
 
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetAssemblies(Server server)
+        private List<MssqlScriptInfo> GetAssemblies(Server server, string databaseName)
         {
             const string method = nameof(GetAssemblies);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.Assemblies.Count);
 
             foreach (SqlAssembly assembly in database.Assemblies)
@@ -458,7 +485,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "Assembly",
                     Name = assembly.Name,
                     Body = MapToString(assembly.Script(_scriptingOption))
@@ -466,16 +493,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetStoredProcedures(Server server)
+        private List<MssqlScriptInfo> GetStoredProcedures(Server server, string databaseName)
         {
             const string method = nameof(GetStoredProcedures);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.StoredProcedures.Count);
 
             foreach (StoredProcedure sp in database.StoredProcedures)
@@ -487,7 +514,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "StoredProcedure",
                     Schema = sp.Schema,
                     Name = sp.Name,
@@ -495,16 +522,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 };
                 scriptCollection.Add(scriptInfo);
             }
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetUserDefinedAggregates(Server server)
+        private List<MssqlScriptInfo> GetUserDefinedAggregates(Server server, string databaseName)
         {
             const string method = nameof(GetUserDefinedAggregates);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.UserDefinedAggregates.Count);
 
             foreach (UserDefinedAggregate udAgr in database.UserDefinedAggregates)
@@ -514,7 +541,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "UserDefinedAggregate",
                     Schema = udAgr.Schema,
                     Name = udAgr.Name,
@@ -523,16 +550,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetUserDefinedDataTypes(Server server)
+        private List<MssqlScriptInfo> GetUserDefinedDataTypes(Server server, string databaseName)
         {
             const string method = nameof(GetUserDefinedDataTypes);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.UserDefinedDataTypes.Count);
 
             foreach (UserDefinedDataType uddt in database.UserDefinedDataTypes)
@@ -542,7 +569,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "UserDefinedDataType",
                     Schema = uddt.Schema,
                     Name = uddt.Name,
@@ -551,16 +578,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetUserDefinedFunctions(Server server)
+        private List<MssqlScriptInfo> GetUserDefinedFunctions(Server server, string databaseName)
         {
             const string method = nameof(GetUserDefinedFunctions);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.UserDefinedFunctions.Count);
 
             foreach (UserDefinedFunction udf in database.UserDefinedFunctions)
@@ -572,7 +599,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "UserDefinedFunction",
                     Schema = udf.Schema,
                     Name = udf.Name,
@@ -581,15 +608,15 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
         }
-        private List<MssqlScriptInfo> GetUserDefinedTableTypes(Server server)
+        private List<MssqlScriptInfo> GetUserDefinedTableTypes(Server server, string databaseName)
         {
             const string method = nameof(GetUserDefinedTableTypes);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.UserDefinedTableTypes.Count);
 
             foreach (UserDefinedTableType udtt in database.UserDefinedTableTypes)
@@ -599,7 +626,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "UserDefinedTableType",
                     Schema = udtt.Schema,
                     Name = udtt.Name,
@@ -608,16 +635,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetUserDefinedTypes(Server server)
+        private List<MssqlScriptInfo> GetUserDefinedTypes(Server server, string databaseName)
         {
             const string method = nameof(GetUserDefinedTypes);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.UserDefinedTypes.Count);
 
             foreach (UserDefinedType udt in database.UserDefinedTypes)
@@ -627,7 +654,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "UserDefinedTableType",
                     Schema = udt.Schema,
                     Name = udt.Name,
@@ -636,16 +663,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetServiceBrokerMessageTypes(Server server)
+        private List<MssqlScriptInfo> GetServiceBrokerMessageTypes(Server server, string databaseName)
         {
             const string method = nameof(GetServiceBrokerMessageTypes);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.ServiceBroker.MessageTypes.Count);
 
             foreach (MessageType mt in database.ServiceBroker.MessageTypes)
@@ -654,7 +681,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     continue;
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "ServiceBrokerMessageType",
                     Name = mt.Name,
                     Body = MapToString(mt.Script(_scriptingOption))
@@ -662,16 +689,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetServiceBrokerServiceContracts(Server server)
+        private List<MssqlScriptInfo> GetServiceBrokerServiceContracts(Server server, string databaseName)
         {
             const string method = nameof(GetServiceBrokerServiceContracts);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.ServiceBroker.ServiceContracts.Count);
 
             foreach (ServiceContract sc in database.ServiceBroker.ServiceContracts)
@@ -680,7 +707,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     continue;
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "ServiceBrokerServiceContract",
                     Name = sc.Name,
                     Body = MapToString(sc.Script(_scriptingOption))
@@ -688,16 +715,16 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
 
         }
-        private List<MssqlScriptInfo> GetServiceBrokerQueues(Server server)
+        private List<MssqlScriptInfo> GetServiceBrokerQueues(Server server, string databaseName)
         {
             const string method = nameof(GetServiceBrokerQueues);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.ServiceBroker.Queues.Count);
 
             foreach (ServiceQueue sq in database.ServiceBroker.Queues)
@@ -709,7 +736,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "ServiceBrokerQueues",
                     Name = sq.Name,
                     Schema = sq.Schema,
@@ -718,15 +745,15 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
         }
-        private List<MssqlScriptInfo> GetServiceBrokerServices(Server server)
+        private List<MssqlScriptInfo> GetServiceBrokerServices(Server server, string databaseName)
         {
             const string method = nameof(GetServiceBrokerServices);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.ServiceBroker.Services.Count);
 
             foreach (BrokerService bs in database.ServiceBroker.Services)
@@ -736,7 +763,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
 
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "ServiceBrokerService",
                     Name = bs.Name,
                     Body = MapToString(bs.Script(_scriptingOption))
@@ -744,22 +771,22 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
         }
-        private List<MssqlScriptInfo> GetServiceBrokerRoutes(Server server)
+        private List<MssqlScriptInfo> GetServiceBrokerRoutes(Server server, string databaseName)
         {
             const string method = nameof(GetServiceBrokerRoutes);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.ServiceBroker.Routes.Count);
 
             foreach (ServiceRoute sr in database.ServiceBroker.Routes)
             {
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "ServiceBrokerRoute",
                     Name = sr.Name,
                     Body = MapToString(sr.Script(_scriptingOption))
@@ -767,22 +794,22 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
         }
-        private List<MssqlScriptInfo> GetServiceBrokerRemoteBinding(Server server)
+        private List<MssqlScriptInfo> GetServiceBrokerRemoteBinding(Server server, string databaseName)
         {
             const string method = nameof(GetServiceBrokerRemoteBinding);
-            _logger?.LogInformation($"{method} begin.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) begin.");
 
-            var database = server.Databases[DatabaseName];
+            var database = server.Databases[databaseName];
             var scriptCollection = new List<MssqlScriptInfo>(database.ServiceBroker.RemoteServiceBindings.Count);
 
             foreach(RemoteServiceBinding rsb in database.ServiceBroker.RemoteServiceBindings)
             {
                 var scriptInfo = new MssqlScriptInfo
                 {
-                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = DatabaseName },
+                    Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
                     Type = "ServiceBrokerRemoteBinding",
                     Name = rsb.Name,
                     Body = MapToString(rsb.Script(_scriptingOption))
@@ -790,7 +817,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
                 scriptCollection.Add(scriptInfo);
             }
 
-            _logger?.LogInformation($"{method} end.");
+            _logger?.LogInformation($"{method} on {server}({databaseName}) end.");
             return scriptCollection;
         }
 
