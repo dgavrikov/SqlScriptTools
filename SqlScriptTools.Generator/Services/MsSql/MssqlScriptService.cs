@@ -66,47 +66,50 @@ namespace SqlScriptTools.Generator.Services.MsSql
             var listScriptInfo = new List<IScriptInfo>(30 * _connectionInfo.Databases.Length);
             var tasks = new List<Task<List<IScriptInfo>>>(_connectionInfo.Databases.Length);
 
+            var connection = GetConnection(_connectionInfo);
+            var server = new Server(connection);
+
+            listScriptInfo.AddRange(GetEndpoints(server));
+            listScriptInfo.AddRange(GetServerJob(server));
+
             foreach (var database in _connectionInfo.Databases)
             {
                 var task = Task.Run(() =>
                 {
                     var taskListScriptInfo = new List<IScriptInfo>(30);
                     
-                    var connection = GetConnection(_connectionInfo);
-                    connection.DatabaseName = database;
+                    var dbConnection = GetConnection(_connectionInfo);
+                    dbConnection.DatabaseName = database;
 
-                    var server = new Server(connection);
+                    var dbServer = new Server(dbConnection);
 
-                    taskListScriptInfo.AddRange(GetEndpoints(server));
-                    taskListScriptInfo.AddRange(GetServerJob(server));
-
-                    taskListScriptInfo.AddRange(GetSchemas(server, database));
-                    taskListScriptInfo.AddRange(GetTables(server, database));
-                    taskListScriptInfo.AddRange(GetViews(server, database));
-                    taskListScriptInfo.AddRange(GetSynonyms(server, database));
-                    taskListScriptInfo.AddRange(GetStoredProcedures(server, database));
-                    taskListScriptInfo.AddRange(GetUserDefinedAggregates(server, database));
-                    taskListScriptInfo.AddRange(GetUserDefinedDataTypes(server, database));
-                    taskListScriptInfo.AddRange(GetUserDefinedFunctions(server, database));
-                    taskListScriptInfo.AddRange(GetUserDefinedTableTypes(server, database));
-                    taskListScriptInfo.AddRange(GetUserDefinedTypes(server, database));
+                    taskListScriptInfo.AddRange(GetSchemas(dbServer, database));
+                    taskListScriptInfo.AddRange(GetTables(dbServer, database));
+                    taskListScriptInfo.AddRange(GetViews(dbServer, database));
+                    taskListScriptInfo.AddRange(GetSynonyms(dbServer, database));
+                    taskListScriptInfo.AddRange(GetStoredProcedures(dbServer, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedAggregates(dbServer, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedDataTypes(dbServer, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedFunctions(dbServer, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedTableTypes(dbServer, database));
+                    taskListScriptInfo.AddRange(GetUserDefinedTypes(dbServer, database));
                     // 2005
-                    if (server.VersionMajor >= 9)
+                    if (dbServer.VersionMajor >= 9)
                     {
-                        taskListScriptInfo.AddRange(GetAssemblies(server, database));
-                        taskListScriptInfo.AddRange(GetPartitionFunctions(server, database));
-                        taskListScriptInfo.AddRange(GetPartitionSchemes(server, database));
-                        taskListScriptInfo.AddRange(GetServiceBrokerMessageTypes(server, database));
-                        taskListScriptInfo.AddRange(GetServiceBrokerServiceContracts(server, database));
-                        taskListScriptInfo.AddRange(GetServiceBrokerQueues(server, database));
-                        taskListScriptInfo.AddRange(GetServiceBrokerServices(server, database));
-                        taskListScriptInfo.AddRange(GetServiceBrokerRoutes(server, database));
-                        taskListScriptInfo.AddRange(GetServiceBrokerRemoteBinding(server, database));
+                        taskListScriptInfo.AddRange(GetAssemblies(dbServer, database));
+                        taskListScriptInfo.AddRange(GetPartitionFunctions(dbServer, database));
+                        taskListScriptInfo.AddRange(GetPartitionSchemes(dbServer, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerMessageTypes(dbServer, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerServiceContracts(dbServer, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerQueues(dbServer, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerServices(dbServer, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerRoutes(dbServer, database));
+                        taskListScriptInfo.AddRange(GetServiceBrokerRemoteBinding(dbServer, database));
                     }
                     //2012
-                    if (server.VersionMajor >= 11)
+                    if (dbServer.VersionMajor >= 11)
                     {
-                        taskListScriptInfo.AddRange(GetSequences(server, database));
+                        taskListScriptInfo.AddRange(GetSequences(dbServer, database));
                     }
 
                     return taskListScriptInfo;
