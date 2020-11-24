@@ -397,9 +397,35 @@ namespace SqlScriptTools.Generator.Services.MsSql
             {
                 if (view.IsSystemObject)
                     continue;
-
+                
                 if (_schemaExcluded.Contains(view.Schema.ToLower()))
                     continue;
+
+                var viewScript = new StringBuilder();
+
+                viewScript.AppendLine(MapToString(view.Script(_scriptingOption)));
+
+                // Index
+                foreach (Microsoft.SqlServer.Management.Smo.Index index in view.Indexes)
+                {
+                    if (index.IsClustered)
+                    {
+                        viewScript.AppendLine(MapToString(index.Script(_scriptingOption)));
+                        continue;
+                    }
+
+                    var indexScript = new StringBuilder();
+                    indexScript.AppendLine(MapToString(index.Script(_scriptingOption)));
+                    var scriptIndexInfo = new MssqlScriptInfo
+                    {
+                        Location = new ScriptInfoLocation { ServerName = GetServerName(server), DatabaseName = databaseName },
+                        Type = "Index",
+                        Schema = $"{view.Schema}.{view.Name}",
+                        Name = index.Name,
+                        Body = indexScript.ToString()
+                    };
+                    scriptCollection.Add(scriptIndexInfo);
+                }
 
                 var scriptInfo = new MssqlScriptInfo
                 {
@@ -407,7 +433,7 @@ namespace SqlScriptTools.Generator.Services.MsSql
                     Type = "View",
                     Schema = view.Schema,
                     Name = view.Name,
-                    Body = MapToString(view.Script(_scriptingOption))
+                    Body = viewScript.ToString()
                 };
                 scriptCollection.Add(scriptInfo);
             }
